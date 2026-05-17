@@ -315,7 +315,7 @@ ${lessonText || "Use the attached lesson file."}`;
     const requestSummary = {
         stage: "request",
         endpoint,
-        model: "gemini-2.5-flash",
+        model: "gemini-2.5-flash-lite",
         secretLocation: "Server-side only: Vercel process.env.GEMINI_API_KEY",
         lessonTextChars: lessonText?.length || 0,
         includesFile: Boolean(filePart),
