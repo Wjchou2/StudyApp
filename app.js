@@ -50,6 +50,11 @@ const state = {
 
 sessionStorage.setItem("quizforge-player-id", state.selfId);
 
+function setSelfId(id) {
+    state.selfId = id;
+    sessionStorage.setItem("quizforge-player-id", id);
+}
+
 const els = {
     roomChip: document.querySelector("#roomChip"),
     cloudStatus: document.querySelector("#cloudStatus"),
@@ -535,8 +540,16 @@ async function joinRoom(code, player) {
     const ref = roomDoc(code);
     const snapshot = await firebase.get(ref);
     if (!snapshot.exists()) return false;
+    const room = snapshot.val();
+    let joinedPlayer = { ...player, lastSeenAt: Date.now() };
+    while (room.players?.[joinedPlayer.id]) {
+        joinedPlayer = { ...joinedPlayer, id: makeId() };
+    }
+    if (joinedPlayer.id !== state.selfId) {
+        setSelfId(joinedPlayer.id);
+    }
     await firebase.update(ref, {
-        [`players/${player.id}`]: player,
+        [`players/${joinedPlayer.id}`]: joinedPlayer,
     });
     setRoomRef(code);
     await setupPresence(code, false);
@@ -561,8 +574,7 @@ async function setupPresence(code, isHost) {
         state.disconnectTask = firebase.onDisconnect(roomDoc(code));
         await state.disconnectTask.remove();
     } else {
-        state.disconnectTask = firebase.onDisconnect(state.playerRef);
-        await state.disconnectTask.remove();
+        state.disconnectTask = null;
     }
 }
 
@@ -574,8 +586,6 @@ async function leaveRoom() {
 
     if (state.role === "host" && state.roomRef) {
         await firebase.remove(state.roomRef);
-    } else if (state.playerRef) {
-        await firebase.remove(state.playerRef);
     }
 
     if (state.unsubscribe) state.unsubscribe();
@@ -1217,8 +1227,6 @@ els.resetGame.addEventListener("click", async () => {
 window.addEventListener("pagehide", () => {
     if (state.role === "host" && state.roomRef) {
         void firebase.remove(state.roomRef);
-    } else if (state.playerRef) {
-        void firebase.remove(state.playerRef);
     }
 });
 
