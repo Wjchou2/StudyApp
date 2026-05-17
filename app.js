@@ -1,4 +1,4 @@
-import { firebaseConfig, geminiConfig } from "./firebase-config.js";
+import { firebaseConfig } from "./firebase-config.js";
 
 const configured = Boolean(firebaseConfig?.projectId && firebaseConfig?.apiKey);
 const firebase = {
@@ -44,6 +44,8 @@ const state = {
   selfId: sessionStorage.getItem("quizforge-player-id") || makeId(),
   clock: null,
   answerRenderKey: "",
+  previewQuestions: [],
+  lastLessonInput: null,
 };
 
 sessionStorage.setItem("quizforge-player-id", state.selfId);
@@ -54,6 +56,8 @@ const els = {
   hostTab: document.querySelector("#hostTab"),
   joinTab: document.querySelector("#joinTab"),
   hostForm: document.querySelector("#hostForm"),
+  geminiDebugPanel: document.querySelector("#geminiDebugPanel"),
+  geminiDebug: document.querySelector("#geminiDebug"),
   joinForm: document.querySelector("#joinForm"),
   lessonFile: document.querySelector("#lessonFile"),
   lessonText: document.querySelector("#lessonText"),
@@ -63,6 +67,10 @@ const els = {
   playerName: document.querySelector("#playerName"),
   emptyState: document.querySelector("#emptyState"),
   hostLobby: document.querySelector("#hostLobby"),
+  previewView: document.querySelector("#previewView"),
+  questionPreview: document.querySelector("#questionPreview"),
+  regeneratePreview: document.querySelector("#regeneratePreview"),
+  createRoomFromPreview: document.querySelector("#createRoomFromPreview"),
   studentLobby: document.querySelector("#studentLobby"),
   studentLobbyText: document.querySelector("#studentLobbyText"),
   hostCode: document.querySelector("#hostCode"),
@@ -174,8 +182,13 @@ function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
-function configuredForGemini() {
-  return Boolean(geminiConfig?.apiKey && geminiConfig.apiKey !== "YOUR_GEMINI_API_KEY");
+function showGeminiDebug(details, open = false) {
+  const text = typeof details === "string" ? details : JSON.stringify(details, null, 2);
+  console.error("[Gemini generation debug]", details);
+  els.geminiDebug.textContent = text;
+  if (open) {
+    els.geminiDebugPanel.open = true;
+  }
 }
 
 function cleanJsonText(text) {
@@ -219,11 +232,9 @@ async function fileToInlinePart(file) {
 }
 
 async function generateGeminiQuestions({ lessonText, filePart, count }) {
-  if (!configuredForGemini()) {
-    throw new Error("Gemini API key is not configured.");
-  }
-
-  const model = geminiConfig.model || "gemini-2.5-flash";
+  // Frontend code is public. It must never contain Gemini API keys or other secrets.
+  // The browser calls the Vercel serverless function, which reads GEMINI_API_KEY with process.env.
+  const endpoint = "/api/gemini";
   const prompt = `Create ${count} classroom quiz questions from the provided lesson material.
 Return only JSON, with no Markdown.
 The JSON must be an array of objects with exactly these keys:
@@ -243,13 +254,23 @@ ${lessonText || "Use the attached lesson file."}`;
   const parts = [{ text: prompt }];
   if (filePart) parts.push(filePart);
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
+  const requestSummary = {
+    stage: "request",
+    endpoint,
+    model: "gemini-2.5-flash",
+    secretLocation: "Server-side only: Vercel process.env.GEMINI_API_KEY",
+    lessonTextChars: lessonText?.length || 0,
+    includesFile: Boolean(filePart),
+    requestedQuestionCount: count,
+  };
+  showGeminiDebug(requestSummary);
+
+  let response;
+  try {
+    response = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-goog-api-key": geminiConfig.apiKey,
       },
       body: JSON.stringify({
         contents: [
@@ -263,19 +284,89 @@ ${lessonText || "Use the attached lesson file."}`;
           temperature: 0.35,
         },
       }),
-    },
-  );
-
-  if (!response.ok) {
-    const message = await response.text();
-    throw new Error(`Gemini request failed: ${message}`);
+    });
+  } catch (error) {
+    const details = {
+      ...requestSummary,
+      stage: "network",
+      message: error.message,
+      name: error.name,
+      likelyCauses: [
+        "The app is not running on Vercel or another server that provides /api/gemini",
+        "The local static server cannot serve Vercel serverless functions",
+        "Network or browser extension blocked the request",
+      ],
+    };
+    showGeminiDebug(details, true);
+    throw new Error(`Gemini network error: ${error.message}`);
   }
 
-  const data = await response.json();
+  const responseText = await response.text();
+  if (!response.ok) {
+    const details = {
+      ...requestSummary,
+      stage: "http",
+      status: response.status,
+      statusText: response.statusText,
+      responseText,
+      likelyCauses: [
+        "GEMINI_API_KEY is missing from Vercel environment variables",
+        "The serverless function returned a Gemini error",
+        "Invalid key, quota, billing, or model access issue in the Gemini project",
+      ],
+    };
+    showGeminiDebug(details, true);
+    throw new Error(`Gemini request failed with HTTP ${response.status}: ${response.statusText}`);
+  }
+
+  let data;
+  try {
+    data = JSON.parse(responseText);
+  } catch (error) {
+    const details = {
+      ...requestSummary,
+      stage: "response-json",
+      message: error.message,
+      responseText,
+    };
+    showGeminiDebug(details, true);
+    throw new Error(`Gemini returned non-JSON response: ${error.message}`);
+  }
+
   const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
-  const parsed = JSON.parse(cleanJsonText(text));
+  let parsed;
+  try {
+    parsed = JSON.parse(cleanJsonText(text));
+  } catch (error) {
+    const details = {
+      ...requestSummary,
+      stage: "generated-json",
+      message: error.message,
+      rawCandidateText: text,
+      fullResponse: data,
+    };
+    showGeminiDebug(details, true);
+    throw new Error(`Gemini generated invalid JSON: ${error.message}`);
+  }
+
   const questions = validateQuestions(parsed, count);
-  if (!questions) throw new Error("Gemini returned questions in an invalid format.");
+  if (!questions) {
+    const details = {
+      ...requestSummary,
+      stage: "validation",
+      message: "Generated JSON did not contain usable questions.",
+      parsed,
+      requiredShape: [{ text: "string", options: ["A", "B", "C", "D"], answer: "one exact option" }],
+    };
+    showGeminiDebug(details, true);
+    throw new Error("Gemini returned questions in an invalid format.");
+  }
+
+  showGeminiDebug({
+    ...requestSummary,
+    stage: "success",
+    generatedQuestionCount: questions.length,
+  });
   return questions;
 }
 
@@ -286,8 +377,9 @@ async function createQuestionsFromLesson(input, count) {
     els.cloudStatus.classList.remove("is-error");
     return questions;
   } catch (error) {
+    console.error("[Gemini fallback reason]", error);
     els.cloudStatus.textContent = `${error.message} Using local fallback questions.`;
-    els.cloudStatus.classList.toggle("is-error", configuredForGemini());
+    els.cloudStatus.classList.add("is-error");
     return createFallbackQuestions(input.lessonText, count);
   }
 }
@@ -488,7 +580,7 @@ async function nextQuestion() {
 }
 
 function showOnly(view) {
-  [els.emptyState, els.hostLobby, els.studentLobby, els.questionView, els.resultsView].forEach((element) => {
+  [els.emptyState, els.hostLobby, els.previewView, els.studentLobby, els.questionView, els.resultsView].forEach((element) => {
     element.classList.add("is-hidden");
   });
   view.classList.remove("is-hidden");
@@ -611,6 +703,112 @@ function renderResults() {
     });
 }
 
+function previewQuestionsFromForm() {
+  return [...els.questionPreview.querySelectorAll(".preview-card")]
+    .map((card) => {
+      const text = card.querySelector(".preview-question").value.trim();
+      const options = [...card.querySelectorAll(".preview-option")]
+        .map((input) => input.value.trim())
+        .filter(Boolean);
+      const answer = card.querySelector(".preview-answer").value.trim();
+      return { text, options, answer };
+    })
+    .filter((question) => question.text && question.options.length >= 4 && question.options.includes(question.answer));
+}
+
+function syncAnswerSelect(card, selectedAnswer) {
+  const select = card.querySelector(".preview-answer");
+  const options = [...card.querySelectorAll(".preview-option")].map((input) => input.value.trim()).filter(Boolean);
+  select.innerHTML = "";
+  options.forEach((option) => {
+    const item = document.createElement("option");
+    item.value = option;
+    item.textContent = option;
+    select.append(item);
+  });
+  select.value = options.includes(selectedAnswer) ? selectedAnswer : options[0] || "";
+}
+
+function renderQuestionPreview(questions) {
+  state.previewQuestions = questions;
+  els.questionPreview.innerHTML = "";
+
+  questions.forEach((question, index) => {
+    const card = document.createElement("article");
+    card.className = "preview-card";
+    card.innerHTML = `
+      <h3>Question ${index + 1}</h3>
+      <label>
+        Question
+        <textarea class="preview-question" rows="3"></textarea>
+      </label>
+      <div class="preview-options"></div>
+      <label>
+        Correct answer
+        <select class="preview-answer"></select>
+      </label>
+    `;
+
+    card.querySelector(".preview-question").value = question.text;
+    const optionsWrap = card.querySelector(".preview-options");
+    question.options.slice(0, 4).forEach((option, optionIndex) => {
+      const label = document.createElement("label");
+      label.textContent = `Option ${optionIndex + 1}`;
+      const input = document.createElement("input");
+      input.className = "preview-option";
+      input.value = option;
+      input.addEventListener("input", () => syncAnswerSelect(card, card.querySelector(".preview-answer").value));
+      label.append(input);
+      optionsWrap.append(label);
+    });
+    syncAnswerSelect(card, question.answer);
+    els.questionPreview.append(card);
+  });
+
+  showOnly(els.previewView);
+}
+
+async function generatePreview() {
+  els.cloudStatus.textContent = "Generating question preview...";
+  els.cloudStatus.classList.remove("is-error");
+  state.lastLessonInput = await readLessonInput();
+  const questionCount = Number(els.questionCount.value);
+  const questions = await createQuestionsFromLesson(state.lastLessonInput, questionCount);
+  renderQuestionPreview(questions);
+}
+
+async function createRoomFromPreview() {
+  if (!(await assertFirebaseReady())) return;
+  const questions = previewQuestionsFromForm();
+  if (!questions.length) {
+    els.cloudStatus.textContent = "Preview needs valid questions, four options, and a matching correct answer.";
+    els.cloudStatus.classList.add("is-error");
+    return;
+  }
+
+  const host = {
+    id: state.selfId,
+    name: "Host",
+    score: 0,
+    answers: {},
+  };
+
+  const code = await createUniqueRoom({
+    hostId: state.selfId,
+    status: "lobby",
+    questions,
+    timerSeconds: Number(els.timerSeconds.value),
+    questionStartedAt: 0,
+    currentQuestion: -1,
+    players: {
+      [host.id]: host,
+    },
+    createdAt: Date.now(),
+  });
+  els.cloudStatus.textContent = `Room ${code} is live in Firebase.`;
+  els.cloudStatus.classList.remove("is-error");
+}
+
 async function readLessonInput() {
   const typed = els.lessonText.value.trim();
   const file = els.lessonFile.files[0];
@@ -633,33 +831,26 @@ els.joinTab.addEventListener("click", () => setMode("join"));
 
 els.hostForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!(await assertFirebaseReady())) return;
-  els.cloudStatus.textContent = "Generating questions...";
-  els.cloudStatus.classList.remove("is-error");
-  const lessonInput = await readLessonInput();
-  const questionCount = Number(els.questionCount.value);
-  const host = {
-    id: state.selfId,
-    name: "Host",
-    score: 0,
-    answers: {},
-  };
-
   try {
-    const code = await createUniqueRoom({
-      hostId: state.selfId,
-      status: "lobby",
-      questions: await createQuestionsFromLesson(lessonInput, questionCount),
-      timerSeconds: Number(els.timerSeconds.value),
-      questionStartedAt: 0,
-      currentQuestion: -1,
-      players: {
-        [host.id]: host,
-      },
-      createdAt: Date.now(),
-    });
-    els.cloudStatus.textContent = `Room ${code} is live in Firebase.`;
-    els.cloudStatus.classList.remove("is-error");
+    await generatePreview();
+  } catch (error) {
+    els.cloudStatus.textContent = error.message;
+    els.cloudStatus.classList.add("is-error");
+  }
+});
+
+els.regeneratePreview.addEventListener("click", async () => {
+  try {
+    await generatePreview();
+  } catch (error) {
+    els.cloudStatus.textContent = error.message;
+    els.cloudStatus.classList.add("is-error");
+  }
+});
+
+els.createRoomFromPreview.addEventListener("click", async () => {
+  try {
+    await createRoomFromPreview();
   } catch (error) {
     els.cloudStatus.textContent = error.message;
     els.cloudStatus.classList.add("is-error");

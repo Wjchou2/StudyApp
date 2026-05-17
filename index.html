@@ -57,8 +57,13 @@
               </label>
             </div>
 
-            <button class="primary-btn" type="submit">Create room</button>
+            <button class="primary-btn" id="generatePreview" type="submit">Generate preview</button>
           </form>
+
+          <details class="debug-panel" id="geminiDebugPanel">
+            <summary>Gemini error details</summary>
+            <pre id="geminiDebug">No Gemini request yet.</pre>
+          </details>
 
           <form id="joinForm" class="stack is-hidden">
             <label>
@@ -89,6 +94,20 @@
               <div class="join-code" id="hostCode">------</div>
             </div>
             <button class="primary-btn" id="startGame" type="button">Start game</button>
+          </div>
+
+          <div class="preview-view is-hidden" id="previewView">
+            <div class="preview-heading">
+              <div>
+                <p class="eyebrow">Host preview</p>
+                <h2>Review questions before opening the room.</h2>
+              </div>
+              <div class="preview-actions">
+                <button class="secondary-btn" id="regeneratePreview" type="button">Regenerate</button>
+                <button class="primary-btn" id="createRoomFromPreview" type="button">Create room</button>
+              </div>
+            </div>
+            <div class="preview-list" id="questionPreview"></div>
           </div>
 
           <div class="waiting-state is-hidden" id="studentLobby">

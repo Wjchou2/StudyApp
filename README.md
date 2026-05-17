@@ -4,6 +4,7 @@ A Firebase-backed study game prototype:
 
 - Host pastes lesson/unit notes or uploads a `.txt`/`.md` file.
 - Gemini generates multiple-choice questions from the lesson content.
+- The host previews and can edit generated questions before creating the room.
 - A Realtime Database room is created with a join code.
 - Students join from other devices using the same deployed URL and code.
 - The host starts a timed quiz.
@@ -48,11 +49,13 @@ host-only room controls, room expiration, and server-side validation.
 ## Gemini Setup
 
 1. Create a Gemini API key in Google AI Studio.
-2. Paste it into `geminiConfig.apiKey` in `firebase-config.js`.
-3. Keep `geminiConfig.model` as `gemini-2.5-flash`, or replace it with another model that supports `generateContent`.
+2. Add it to Vercel as an environment variable named `GEMINI_API_KEY`.
+3. Deploy the project to Vercel so `/api/gemini` runs as a serverless function.
 
-This static prototype calls Gemini directly from the browser, so the Gemini key is visible to users.
-For production, proxy this through a Cloud Function or server endpoint.
+Frontend code is public, so it must not contain the Gemini API key. The browser calls
+`/api/gemini`; the Vercel serverless function reads the secret with `process.env.GEMINI_API_KEY`
+and forwards the request to `gemini-2.5-flash`.
 
-The app sends pasted notes and uploaded PDFs to Gemini. If Gemini is not configured or returns
-invalid JSON, the app falls back to the local generator so the game can still run.
+The app sends pasted notes and uploaded PDFs to `/api/gemini`. If the function is unavailable,
+the environment variable is missing, or Gemini returns invalid JSON, the app falls back to the
+local generator so the game can still run.
