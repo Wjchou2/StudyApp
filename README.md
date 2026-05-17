@@ -57,7 +57,9 @@ host-only room controls, room expiration, and server-side validation.
 
 Frontend code is public, so it must not contain the Gemini API key. The browser calls
 `/api/gemini`; the Vercel serverless function reads the secret with `process.env.GEMINI_API_KEY`
-and forwards the request to `gemini-2.5-flash`.
+and forwards the request to `gemini-2.5-flash-lite`. If that model returns HTTP 429, the
+function retries the same request with `gemma-4-26b-it` and includes `modelUsed` in the JSON
+response.
 
 The app sends pasted notes and uploaded PDFs to `/api/gemini`. If the function is unavailable,
 the environment variable is missing, or Gemini returns invalid JSON, the app falls back to the
