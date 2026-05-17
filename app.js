@@ -56,13 +56,12 @@ const els = {
   hostTab: document.querySelector("#hostTab"),
   joinTab: document.querySelector("#joinTab"),
   hostForm: document.querySelector("#hostForm"),
-  geminiDebugPanel: document.querySelector("#geminiDebugPanel"),
-  geminiDebug: document.querySelector("#geminiDebug"),
   joinForm: document.querySelector("#joinForm"),
   lessonFile: document.querySelector("#lessonFile"),
   lessonText: document.querySelector("#lessonText"),
   questionCount: document.querySelector("#questionCount"),
   timerSeconds: document.querySelector("#timerSeconds"),
+  questionType: document.querySelector("#questionType"),
   joinCode: document.querySelector("#joinCode"),
   playerName: document.querySelector("#playerName"),
   emptyState: document.querySelector("#emptyState"),
@@ -149,7 +148,7 @@ function titleCase(text) {
   return text.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function createFallbackQuestions(lessonText, count) {
+function createFallbackQuestions(lessonText, count, questionType = "multiple-choice") {
   const text = lessonText.trim() || fallbackLesson;
   const sentences = sentencesFrom(text);
   const terms = extractTerms(text);
@@ -165,9 +164,22 @@ function createFallbackQuestions(lessonText, count) {
       .slice(index + 1)
       .concat(allTerms)
       .slice(0, 3);
+
+    if (questionType === "open-ended") {
+      return {
+        type: "open-ended",
+        text:
+          source.toLowerCase().includes(answer)
+            ? `What term completes this lesson idea: "${source.replace(new RegExp(answer, "i"), "_____")}"?`
+            : `Name the lesson term most connected to this idea: "${source}".`,
+        answer: titleCase(answer),
+      };
+    }
+
     const options = shuffle([answer, ...distractors]).map(titleCase);
 
     return {
+      type: "multiple-choice",
       text:
         source.toLowerCase().includes(answer)
           ? `Which term best completes this lesson idea: "${source.replace(new RegExp(answer, "i"), "_____")}"?`
@@ -182,13 +194,8 @@ function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
-function showGeminiDebug(details, open = false) {
-  const text = typeof details === "string" ? details : JSON.stringify(details, null, 2);
+function showGeminiDebug(details) {
   console.error("[Gemini generation debug]", details);
-  els.geminiDebug.textContent = text;
-  if (open) {
-    els.geminiDebugPanel.open = true;
-  }
 }
 
 function cleanJsonText(text) {
@@ -200,15 +207,26 @@ function cleanJsonText(text) {
     .trim();
 }
 
-function validateQuestions(value, count) {
+function validateQuestions(value, count, questionType) {
   if (!Array.isArray(value)) return null;
   const questions = value
     .map((item) => ({
+      type: item.type === "open-ended" ? "open-ended" : "multiple-choice",
       text: String(item.text || item.question || "").trim(),
       answer: String(item.answer || "").trim(),
       options: Array.isArray(item.options) ? item.options.map((option) => String(option).trim()) : [],
     }))
-    .filter((item) => item.text && item.answer && item.options.length >= 4 && item.options.includes(item.answer))
+    .filter((item) => {
+      if (questionType === "open-ended") {
+        return item.text && item.answer;
+      }
+      return item.text && item.answer && item.options.length >= 4 && item.options.includes(item.answer);
+    })
+    .map((item) =>
+      questionType === "open-ended"
+        ? { type: "open-ended", text: item.text, answer: item.answer }
+        : { type: "multiple-choice", text: item.text, answer: item.answer, options: item.options.slice(0, 4) },
+    )
     .slice(0, count);
 
   return questions.length ? questions : null;
@@ -231,22 +249,32 @@ async function fileToInlinePart(file) {
   };
 }
 
-async function generateGeminiQuestions({ lessonText, filePart, count }) {
+async function generateGeminiQuestions({ lessonText, filePart, count, questionType }) {
   // Frontend code is public. It must never contain Gemini API keys or other secrets.
   // The browser calls the Vercel serverless function, which reads GEMINI_API_KEY with process.env.
   const endpoint = "/api/gemini";
-  const prompt = `Create ${count} classroom quiz questions from the provided lesson material.
-Return only JSON, with no Markdown.
-The JSON must be an array of objects with exactly these keys:
+  const shape =
+    questionType === "open-ended"
+      ? `The JSON must be an array of objects with exactly these keys:
+type: "open-ended"
+text: string question
+answer: concise string answer used for exact-match grading`
+      : `The JSON must be an array of objects with exactly these keys:
+type: "multiple-choice"
 text: string question
 options: array of exactly 4 short answer choices
-answer: string that exactly matches one option
+answer: string that exactly matches one option`;
+
+  const prompt = `Create ${count} ${questionType} classroom quiz questions from the provided lesson material.
+Return only JSON, with no Markdown.
+${shape}
 
 Rules:
 - Questions must be answerable from the lesson material.
 - Avoid trick questions.
 - Make distractors plausible but clearly wrong.
 - Keep wording suitable for students.
+- For open-ended questions, use answers short enough to grade by exact normalized text match.
 
 Lesson text:
 ${lessonText || "Use the attached lesson file."}`;
@@ -262,6 +290,7 @@ ${lessonText || "Use the attached lesson file."}`;
     lessonTextChars: lessonText?.length || 0,
     includesFile: Boolean(filePart),
     requestedQuestionCount: count,
+    questionType,
   };
   showGeminiDebug(requestSummary);
 
@@ -297,7 +326,7 @@ ${lessonText || "Use the attached lesson file."}`;
         "Network or browser extension blocked the request",
       ],
     };
-    showGeminiDebug(details, true);
+    showGeminiDebug(details);
     throw new Error(`Gemini network error: ${error.message}`);
   }
 
@@ -315,7 +344,7 @@ ${lessonText || "Use the attached lesson file."}`;
         "Invalid key, quota, billing, or model access issue in the Gemini project",
       ],
     };
-    showGeminiDebug(details, true);
+    showGeminiDebug(details);
     throw new Error(`Gemini request failed with HTTP ${response.status}: ${response.statusText}`);
   }
 
@@ -329,7 +358,7 @@ ${lessonText || "Use the attached lesson file."}`;
       message: error.message,
       responseText,
     };
-    showGeminiDebug(details, true);
+    showGeminiDebug(details);
     throw new Error(`Gemini returned non-JSON response: ${error.message}`);
   }
 
@@ -345,11 +374,11 @@ ${lessonText || "Use the attached lesson file."}`;
       rawCandidateText: text,
       fullResponse: data,
     };
-    showGeminiDebug(details, true);
+    showGeminiDebug(details);
     throw new Error(`Gemini generated invalid JSON: ${error.message}`);
   }
 
-  const questions = validateQuestions(parsed, count);
+  const questions = validateQuestions(parsed, count, questionType);
   if (!questions) {
     const details = {
       ...requestSummary,
@@ -358,7 +387,7 @@ ${lessonText || "Use the attached lesson file."}`;
       parsed,
       requiredShape: [{ text: "string", options: ["A", "B", "C", "D"], answer: "one exact option" }],
     };
-    showGeminiDebug(details, true);
+    showGeminiDebug(details);
     throw new Error("Gemini returned questions in an invalid format.");
   }
 
@@ -370,17 +399,17 @@ ${lessonText || "Use the attached lesson file."}`;
   return questions;
 }
 
-async function createQuestionsFromLesson(input, count) {
+async function createQuestionsFromLesson(input, count, questionType) {
   try {
-    const questions = await generateGeminiQuestions({ ...input, count });
+    const questions = await generateGeminiQuestions({ ...input, count, questionType });
     els.cloudStatus.textContent = "Gemini generated the quiz.";
     els.cloudStatus.classList.remove("is-error");
     return questions;
   } catch (error) {
     console.error("[Gemini fallback reason]", error);
-    els.cloudStatus.textContent = `${error.message} Using local fallback questions.`;
+    els.cloudStatus.textContent = "Gemini unavailable. Using local fallback questions.";
     els.cloudStatus.classList.add("is-error");
-    return createFallbackQuestions(input.lessonText, count);
+    return createFallbackQuestions(input.lessonText, count, questionType);
   }
 }
 
@@ -523,18 +552,25 @@ function remainingSeconds(room = state.room) {
   return Math.max(0, room.timerSeconds - elapsed);
 }
 
+function normalizeAnswer(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
 async function answerQuestion(option) {
   if (!state.room || state.room.status !== "question") return;
   const question = currentQuestion();
   const player = state.room.players?.[state.selfId];
   if (!question || !player || player.answers?.[state.room.currentQuestion]) return;
 
-  const correct = option === question.answer;
+  const correct = normalizeAnswer(option) === normalizeAnswer(question.answer);
   const answers = {
     ...(player.answers || {}),
     [state.room.currentQuestion]: { option, correct },
   };
-  const score = correct ? player.score + 500 + remainingSeconds() * 5 : player.score;
+  const score = correct ? player.score + 1 : player.score;
 
   await updateRoom({
     [`players/${state.selfId}/answers`]: answers,
@@ -641,20 +677,43 @@ function renderQuestion() {
     state.answerRenderKey = answerKey;
     els.answers.innerHTML = "";
 
-    question.options.forEach((option) => {
-      const button = document.createElement("button");
-      button.className = "answer-btn";
-      button.type = "button";
-      button.textContent = option;
+    if (question.type === "open-ended") {
+      const form = document.createElement("form");
+      form.className = "open-answer";
+      form.innerHTML = `
+        <label>
+          Answer
+          <input class="open-answer-input" type="text" autocomplete="off" />
+        </label>
+        <button class="primary-btn" type="submit">Submit answer</button>
+      `;
+      const input = form.querySelector(".open-answer-input");
       if (ownAnswer) {
-        button.disabled = true;
-        button.classList.toggle("selected", ownAnswer.option === option);
-        button.classList.toggle("correct", option === question.answer);
-        button.classList.toggle("wrong", ownAnswer.option === option && !ownAnswer.correct);
+        input.value = ownAnswer.option;
+        input.disabled = true;
+        form.querySelector("button").disabled = true;
       }
-      button.addEventListener("click", () => answerQuestion(option));
-      els.answers.append(button);
-    });
+      form.addEventListener("submit", (event) => {
+        event.preventDefault();
+        if (input.value.trim()) answerQuestion(input.value.trim());
+      });
+      els.answers.append(form);
+    } else {
+      question.options.forEach((option) => {
+        const button = document.createElement("button");
+        button.className = "answer-btn";
+        button.type = "button";
+        button.textContent = option;
+        if (ownAnswer) {
+          button.disabled = true;
+          button.classList.toggle("selected", ownAnswer.option === option);
+          button.classList.toggle("correct", normalizeAnswer(option) === normalizeAnswer(question.answer));
+          button.classList.toggle("wrong", ownAnswer.option === option && !ownAnswer.correct);
+        }
+        button.addEventListener("click", () => answerQuestion(option));
+        els.answers.append(button);
+      });
+    }
   }
 
   els.answerNote.textContent = ownAnswer
@@ -706,14 +765,19 @@ function renderResults() {
 function previewQuestionsFromForm() {
   return [...els.questionPreview.querySelectorAll(".preview-card")]
     .map((card) => {
+      const type = card.dataset.questionType || "multiple-choice";
       const text = card.querySelector(".preview-question").value.trim();
-      const options = [...card.querySelectorAll(".preview-option")]
-        .map((input) => input.value.trim())
-        .filter(Boolean);
       const answer = card.querySelector(".preview-answer").value.trim();
-      return { text, options, answer };
+      if (type === "open-ended") {
+        return { type, text, answer };
+      }
+      const options = [...card.querySelectorAll(".preview-option")].map((input) => input.value.trim()).filter(Boolean);
+      return { type, text, options, answer };
     })
-    .filter((question) => question.text && question.options.length >= 4 && question.options.includes(question.answer));
+    .filter((question) => {
+      if (question.type === "open-ended") return question.text && question.answer;
+      return question.text && question.options.length >= 4 && question.options.includes(question.answer);
+    });
 }
 
 function syncAnswerSelect(card, selectedAnswer) {
@@ -736,21 +800,30 @@ function renderQuestionPreview(questions) {
   questions.forEach((question, index) => {
     const card = document.createElement("article");
     card.className = "preview-card";
+    card.dataset.questionType = question.type || "multiple-choice";
+    const isOpenEnded = question.type === "open-ended";
     card.innerHTML = `
       <h3>Question ${index + 1}</h3>
       <label>
         Question
         <textarea class="preview-question" rows="3"></textarea>
       </label>
-      <div class="preview-options"></div>
       <label>
         Correct answer
-        <select class="preview-answer"></select>
+        ${isOpenEnded ? '<input class="preview-answer" type="text" />' : '<select class="preview-answer"></select>'}
       </label>
     `;
 
     card.querySelector(".preview-question").value = question.text;
-    const optionsWrap = card.querySelector(".preview-options");
+    if (isOpenEnded) {
+      card.querySelector(".preview-answer").value = question.answer;
+      els.questionPreview.append(card);
+      return;
+    }
+
+    const optionsWrap = document.createElement("div");
+    optionsWrap.className = "preview-options";
+    card.querySelector("label:last-child").before(optionsWrap);
     question.options.slice(0, 4).forEach((option, optionIndex) => {
       const label = document.createElement("label");
       label.textContent = `Option ${optionIndex + 1}`;
@@ -773,7 +846,7 @@ async function generatePreview() {
   els.cloudStatus.classList.remove("is-error");
   state.lastLessonInput = await readLessonInput();
   const questionCount = Number(els.questionCount.value);
-  const questions = await createQuestionsFromLesson(state.lastLessonInput, questionCount);
+  const questions = await createQuestionsFromLesson(state.lastLessonInput, questionCount, els.questionType.value);
   renderQuestionPreview(questions);
 }
 
@@ -797,7 +870,7 @@ async function createRoomFromPreview() {
     hostId: state.selfId,
     status: "lobby",
     questions,
-    timerSeconds: Number(els.timerSeconds.value),
+    timerSeconds: Math.max(1, Number(els.timerSeconds.value) || 30),
     questionStartedAt: 0,
     currentQuestion: -1,
     players: {

@@ -47,23 +47,23 @@
                 <input id="questionCount" type="number" min="3" max="12" value="6" />
               </label>
               <label>
-                Timer
-                <select id="timerSeconds">
-                  <option value="15">15 sec</option>
-                  <option value="30" selected>30 sec</option>
-                  <option value="45">45 sec</option>
-                  <option value="60">60 sec</option>
+                Timer seconds
+                <input id="timerSeconds" type="number" min="1" value="30" />
+              </label>
+            </div>
+
+            <div class="inline-fields">
+              <label>
+                Question type
+                <select id="questionType">
+                  <option value="multiple-choice" selected>Multiple choice</option>
+                  <option value="open-ended">Open ended</option>
                 </select>
               </label>
             </div>
 
             <button class="primary-btn" id="generatePreview" type="submit">Generate preview</button>
           </form>
-
-          <details class="debug-panel" id="geminiDebugPanel">
-            <summary>Gemini error details</summary>
-            <pre id="geminiDebug">No Gemini request yet.</pre>
-          </details>
 
           <form id="joinForm" class="stack is-hidden">
             <label>
@@ -83,7 +83,7 @@
             <div class="badge">Ready</div>
             <h2>Create a room from a lesson, then students join with the code.</h2>
             <p>
-              This version generates multiple-choice questions from pasted lesson text and syncs
+              This version generates multiple-choice or open-ended questions from pasted lesson text and syncs
               live rooms through Firebase Realtime Database, so students can join from other devices.
             </p>
           </div>

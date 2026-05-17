@@ -3,12 +3,12 @@
 A Firebase-backed study game prototype:
 
 - Host pastes lesson/unit notes or uploads a `.txt`/`.md` file.
-- Gemini generates multiple-choice questions from the lesson content.
+- Gemini generates multiple-choice or open-ended questions from the lesson content.
 - The host previews and can edit generated questions before creating the room.
 - A Realtime Database room is created with a join code.
 - Students join from other devices using the same deployed URL and code.
 - The host starts a timed quiz.
-- Players answer each question, earn points for correct answers, and see a live leaderboard.
+- Players answer each question, earn 1 point for each correct answer, and see a live leaderboard.
 - The room is removed when the host disconnects. Non-host players are removed when they disconnect.
 
 ## Run Locally

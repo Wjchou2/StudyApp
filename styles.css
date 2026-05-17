@@ -99,34 +99,6 @@ textarea {
   color: var(--rose);
 }
 
-.debug-panel {
-  margin-top: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fbfdfc;
-  color: var(--muted);
-}
-
-.debug-panel summary {
-  cursor: pointer;
-  padding: 10px 12px;
-  font-size: 0.82rem;
-  font-weight: 850;
-}
-
-.debug-panel pre {
-  margin: 0;
-  max-height: 220px;
-  overflow: auto;
-  border-top: 1px solid var(--line);
-  padding: 12px;
-  color: var(--ink);
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 0.78rem;
-  line-height: 1.45;
-}
-
 .layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr) 260px;
@@ -393,6 +365,11 @@ textarea:focus {
 .answer-btn.wrong {
   border-color: var(--rose);
   background: rgba(185, 60, 90, 0.12);
+}
+
+.open-answer {
+  display: grid;
+  gap: 12px;
 }
 
 .answer-note {
