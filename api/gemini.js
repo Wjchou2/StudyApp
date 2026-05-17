@@ -47,7 +47,7 @@ export default async function handler(req, res) {
 
     try {
         const primary = await callGemini(PRIMARY_MODEL, apiKey, req.body);
-        if (primary.response.status !== 429) {
+        if (primary.response.status !== 404) {
             return res.status(primary.response.status).json({
                 ...primary.data,
                 modelUsed: primary.model,
