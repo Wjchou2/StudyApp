@@ -370,6 +370,72 @@ textarea:focus {
 .open-answer {
   display: grid;
   gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.reveal-panel {
+  display: grid;
+  gap: 14px;
+  grid-column: 1 / -1;
+}
+
+.correct-answer {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(15, 127, 111, 0.28);
+  border-radius: 8px;
+  background: rgba(15, 127, 111, 0.1);
+  padding: 14px;
+}
+
+.correct-answer span {
+  color: var(--accent-strong);
+  font-size: 0.75rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.response-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.response-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfdfc;
+  padding: 12px;
+}
+
+.response-row.is-correct {
+  border-color: rgba(15, 127, 111, 0.35);
+}
+
+.response-row.is-wrong {
+  border-color: rgba(185, 60, 90, 0.35);
+}
+
+.response-answer {
+  margin: 4px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.result-pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 850;
+  background: var(--rose);
+}
+
+.response-row.is-correct .result-pill {
+  background: var(--accent);
 }
 
 .answer-note {

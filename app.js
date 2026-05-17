@@ -559,33 +559,110 @@ function normalizeAnswer(value) {
     .replace(/\s+/g, " ");
 }
 
+async function gradeOpenEndedAnswer(question, studentAnswer) {
+  const prompt = `Grade this student's open-ended answer.
+Return only JSON with this exact shape:
+{"correct": boolean, "reason": "short reason"}
+
+Question: ${question.text}
+Expected answer: ${question.answer}
+Student answer: ${studentAnswer}
+
+Mark correct if the student answer is semantically equivalent, even if wording differs.
+Mark wrong if it is missing the key idea, too vague, or contradicts the expected answer.`;
+
+  try {
+    const response = await fetch("/api/gemini", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+      }),
+    });
+
+    const responseText = await response.text();
+    if (!response.ok) {
+      throw new Error(`Gemini grading failed with HTTP ${response.status}: ${responseText}`);
+    }
+
+    const data = JSON.parse(responseText);
+    const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+    const parsed = JSON.parse(cleanJsonText(text));
+    if (typeof parsed.correct !== "boolean") {
+      throw new Error("Gemini grading returned invalid JSON.");
+    }
+    return {
+      correct: parsed.correct,
+      reason: String(parsed.reason || "").trim(),
+    };
+  } catch (error) {
+    console.error("[Gemini grading fallback reason]", error);
+    return {
+      correct: normalizeAnswer(studentAnswer) === normalizeAnswer(question.answer),
+      reason: "Fallback exact-match grading used.",
+    };
+  }
+}
+
 async function answerQuestion(option) {
   if (!state.room || state.room.status !== "question") return;
   const question = currentQuestion();
   const player = state.room.players?.[state.selfId];
   if (!question || !player || player.answers?.[state.room.currentQuestion]) return;
 
-  const correct = normalizeAnswer(option) === normalizeAnswer(question.answer);
+  const grade =
+    question.type === "open-ended"
+      ? await gradeOpenEndedAnswer(question, option)
+      : { correct: normalizeAnswer(option) === normalizeAnswer(question.answer), reason: "" };
+  const correct = grade.correct;
   const answers = {
     ...(player.answers || {}),
-    [state.room.currentQuestion]: { option, correct },
+    [state.room.currentQuestion]: { option, correct, reason: grade.reason || "" },
   };
-  const score = correct ? player.score + 1 : player.score;
 
   await updateRoom({
     [`players/${state.selfId}/answers`]: answers,
-    [`players/${state.selfId}/score`]: score,
   });
 }
 
 async function startQuestion(index) {
   clearInterval(state.clock);
+  state.answerRenderKey = "";
   await updateRoom({
     currentQuestion: index,
     questionStartedAt: Date.now(),
     status: "question",
   });
   startQuestionClock();
+}
+
+async function revealQuestion() {
+  if (!state.room || state.room.status !== "question") return;
+  const questionIndex = state.room.currentQuestion;
+  const alreadyScored = state.room.scoredQuestions?.[questionIndex];
+  const patch = { status: "reveal" };
+
+  if (!alreadyScored) {
+    playersFrom(state.room).forEach((player) => {
+      if (player.answers?.[questionIndex]?.correct) {
+        patch[`players/${player.id}/score`] = (player.score || 0) + 1;
+      }
+    });
+    patch[`scoredQuestions/${questionIndex}`] = true;
+  }
+
+  await updateRoom(patch);
 }
 
 function startQuestionClock() {
@@ -595,7 +672,7 @@ function startQuestionClock() {
     renderQuestion();
     if (state.role === "host" && (remainingSeconds() <= 0 || everyoneAnswered())) {
       clearInterval(state.clock);
-      await nextQuestion();
+      await revealQuestion();
     }
   }, 500);
 }
@@ -603,7 +680,9 @@ function startQuestionClock() {
 function everyoneAnswered() {
   const questionIndex = state.room.currentQuestion;
   const players = playersFrom(state.room);
-  return players.length > 0 && players.every((player) => player.answers?.[questionIndex]);
+  const contestants = players.filter((player) => player.id !== state.room.hostId);
+  const requiredPlayers = contestants.length ? contestants : players;
+  return requiredPlayers.length > 0 && requiredPlayers.every((player) => player.answers?.[questionIndex]);
 }
 
 async function nextQuestion() {
@@ -651,6 +730,10 @@ function render() {
   if (room.status === "question") {
     renderQuestion();
     startQuestionClock();
+  }
+  if (room.status === "reveal") {
+    clearInterval(state.clock);
+    renderReveal();
   }
   if (room.status === "results") {
     clearInterval(state.clock);
@@ -707,8 +790,6 @@ function renderQuestion() {
         if (ownAnswer) {
           button.disabled = true;
           button.classList.toggle("selected", ownAnswer.option === option);
-          button.classList.toggle("correct", normalizeAnswer(option) === normalizeAnswer(question.answer));
-          button.classList.toggle("wrong", ownAnswer.option === option && !ownAnswer.correct);
         }
         button.addEventListener("click", () => answerQuestion(option));
         els.answers.append(button);
@@ -717,12 +798,69 @@ function renderQuestion() {
   }
 
   els.answerNote.textContent = ownAnswer
-    ? ownAnswer.correct
-      ? "Correct. Waiting for the next question."
-      : `Not quite. Correct answer: ${question.answer}.`
+    ? "Answer submitted. Waiting for the reveal."
     : state.role === "host"
-      ? "Host view: responses sync from Realtime Database."
+      ? "Waiting for responses. Results reveal after everyone answers or time runs out."
       : "Choose an answer before the timer ends.";
+}
+
+function renderReveal() {
+  const room = state.room;
+  const question = currentQuestion();
+  if (!question) return;
+  const players = playersFrom(room);
+  const answeredCount = players.filter((player) => player.answers?.[room.currentQuestion]).length;
+
+  showOnly(els.questionView);
+  els.questionProgress.textContent = `Question ${room.currentQuestion + 1} / ${room.questions.length}`;
+  els.timerBadge.textContent = "Done";
+  els.questionText.textContent = question.text;
+  els.answers.innerHTML = "";
+  state.answerRenderKey = `reveal:${room.code}:${room.currentQuestion}:${answeredCount}`;
+
+  const panel = document.createElement("div");
+  panel.className = "reveal-panel";
+  panel.innerHTML = `
+    <div class="correct-answer">
+      <span>Correct answer</span>
+      <strong></strong>
+    </div>
+    <div class="response-grid"></div>
+  `;
+  panel.querySelector("strong").textContent = question.answer;
+  const grid = panel.querySelector(".response-grid");
+
+  players
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach((player) => {
+      const answer = player.answers?.[room.currentQuestion];
+      const row = document.createElement("div");
+      row.className = `response-row ${answer?.correct ? "is-correct" : "is-wrong"}`;
+      row.innerHTML = `
+        <div>
+          <strong class="player-name"></strong>
+          <p class="response-answer"></p>
+        </div>
+        <span class="result-pill"></span>
+      `;
+      row.querySelector(".player-name").textContent = player.name;
+      row.querySelector(".response-answer").textContent = answer ? answer.option : "No answer";
+      row.querySelector(".result-pill").textContent = answer?.correct ? "Right" : "Wrong";
+      grid.append(row);
+    });
+
+  if (state.role === "host") {
+    const button = document.createElement("button");
+    button.className = "primary-btn";
+    button.type = "button";
+    button.textContent =
+      room.currentQuestion + 1 >= room.questions.length ? "Show final results" : "Next question";
+    button.addEventListener("click", nextQuestion);
+    panel.append(button);
+  }
+
+  els.answers.append(panel);
+  els.answerNote.textContent = `${answeredCount} of ${players.length} players answered.`;
 }
 
 function renderPlayers(players) {

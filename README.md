@@ -8,7 +8,10 @@ A Firebase-backed study game prototype:
 - A Realtime Database room is created with a join code.
 - Students join from other devices using the same deployed URL and code.
 - The host starts a timed quiz.
-- Players answer each question, earn 1 point for each correct answer, and see a live leaderboard.
+- Players answer each question, then results reveal publicly after everyone answers or the timer expires.
+- The reveal screen shows what each person answered and whether they were right or wrong.
+- Players earn 1 point for each correct answer, and see a live leaderboard.
+- Open-ended answers are graded by Gemini for semantic correctness, with exact-match fallback if Gemini is unavailable.
 - The room is removed when the host disconnects. Non-host players are removed when they disconnect.
 
 ## Run Locally
