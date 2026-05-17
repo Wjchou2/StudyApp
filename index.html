@@ -1,149 +1,231 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>QuizForge Rooms</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <main class="app-shell">
-      <section class="topbar" aria-label="App header">
-        <div>
-          <p class="eyebrow">AI study game</p>
-          <h1>QuizForge Rooms</h1>
-        </div>
-        <div class="top-status">
-          <div class="room-chip" id="roomChip">No room</div>
-          <div class="cloud-status" id="cloudStatus">Checking cloud sync</div>
-        </div>
-      </section>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>QuizForge Rooms</title>
+        <link rel="stylesheet" href="styles.css" />
+    </head>
+    <body>
+        <main class="app-shell">
+            <section class="topbar" aria-label="App header">
+                <div>
+                    <p class="eyebrow">AI study game</p>
+                    <h1>QuizForge Rooms</h1>
+                </div>
+                <div class="top-status">
+                    <div class="room-chip" id="roomChip">No room</div>
+                    <div class="cloud-status" id="cloudStatus">
+                        Checking cloud sync
+                    </div>
+                </div>
+            </section>
 
-      <section class="layout">
-        <aside class="panel setup-panel" aria-label="Room setup">
-          <div class="tabs" role="tablist" aria-label="Mode">
-            <button class="tab is-active" id="hostTab" type="button">Host</button>
-            <button class="tab" id="joinTab" type="button">Join</button>
-          </div>
+            <section class="layout">
+                <aside class="panel setup-panel" aria-label="Room setup">
+                    <div class="tabs" role="tablist" aria-label="Mode">
+                        <button
+                            class="tab is-active"
+                            id="hostTab"
+                            type="button"
+                        >
+                            Host
+                        </button>
+                        <button class="tab" id="joinTab" type="button">
+                            Join
+                        </button>
+                    </div>
 
-          <form id="hostForm" class="stack">
-            <label>
-              Lesson or unit file
-              <input id="lessonFile" type="file" accept=".pdf,.txt,.md" />
-            </label>
+                    <form id="hostForm" class="stack">
+                        <label>
+                            Lesson or unit file
+                            <input
+                                id="lessonFile"
+                                type="file"
+                                accept=".pdf,.txt,.md"
+                            />
+                        </label>
 
-            <label>
-              Paste lesson notes
-              <textarea
-                id="lessonText"
-                rows="8"
-                placeholder="Paste your unit notes, objectives, vocabulary, or a study guide here."
-              ></textarea>
-            </label>
+                        <label>
+                            Paste lesson notes
+                            <textarea
+                                id="lessonText"
+                                rows="8"
+                                placeholder="Paste your unit notes, objectives, vocabulary, or a study guide here."
+                            ></textarea>
+                        </label>
 
-            <div class="inline-fields">
-              <label>
-                Questions
-                <input id="questionCount" type="number" min="3" max="12" value="6" />
-              </label>
-              <label>
-                Timer seconds
-                <input id="timerSeconds" type="number" min="1" value="30" />
-              </label>
-            </div>
+                        <div class="inline-fields">
+                            <label>
+                                Questions
+                                <input
+                                    id="questionCount"
+                                    type="number"
+                                    min="3"
+                                    max="12"
+                                    value="6"
+                                />
+                            </label>
+                            <label>
+                                Timer seconds
+                                <input
+                                    id="timerSeconds"
+                                    type="number"
+                                    min="1"
+                                    value="30"
+                                />
+                            </label>
+                        </div>
 
-            <div class="inline-fields">
-              <label>
-                Question type
-                <select id="questionType">
-                  <option value="multiple-choice" selected>Multiple choice</option>
-                  <option value="open-ended">Open ended</option>
-                </select>
-              </label>
-            </div>
+                        <div class="inline-fields">
+                            <label>
+                                Question type
+                                <select id="questionType">
+                                    <option value="multiple-choice" selected>
+                                        Multiple choice
+                                    </option>
+                                    <option value="open-ended">
+                                        Open ended
+                                    </option>
+                                </select>
+                            </label>
+                        </div>
 
-            <button class="primary-btn" id="generatePreview" type="submit">Generate preview</button>
-          </form>
+                        <button
+                            class="primary-btn"
+                            id="generatePreview"
+                            type="submit"
+                        >
+                            Generate preview
+                        </button>
+                    </form>
 
-          <form id="joinForm" class="stack is-hidden">
-            <label>
-              Join code
-              <input id="joinCode" type="text" maxlength="6" placeholder="ABC123" autocomplete="off" />
-            </label>
-            <label>
-              Display name
-              <input id="playerName" type="text" maxlength="18" placeholder="Maya" />
-            </label>
-            <button class="primary-btn" type="submit">Join game</button>
-          </form>
-        </aside>
+                    <form id="joinForm" class="stack is-hidden">
+                        <label>
+                            Join code
+                            <input
+                                id="joinCode"
+                                type="text"
+                                maxlength="6"
+                                placeholder="ABC123"
+                                autocomplete="off"
+                            />
+                        </label>
+                        <label>
+                            Display name
+                            <input
+                                id="playerName"
+                                type="text"
+                                maxlength="18"
+                                placeholder="Maya"
+                            />
+                        </label>
+                        <button class="primary-btn" type="submit">
+                            Join game
+                        </button>
+                    </form>
+                </aside>
 
-        <section class="game-surface" aria-live="polite">
-          <div class="waiting-state" id="emptyState">
-            <div class="badge">Ready</div>
-            <h2>Create a room from a lesson, then students join with the code.</h2>
-            <p>
-              This version generates multiple-choice or open-ended questions from pasted lesson text and syncs
-              live rooms through Firebase Realtime Database, so students can join from other devices.
-            </p>
-          </div>
+                <section class="game-surface" aria-live="polite">
+                    <div class="waiting-state" id="emptyState">
+                        <div class="badge">Ready</div>
+                        <h2>
+                            Create a room from a lesson, then students join with
+                            the code.
+                        </h2>
+                        <p>
+                            This version generates multiple-choice or open-ended
+                            questions from pasted lesson text and syncs live
+                            rooms through Firebase Realtime Database, so
+                            students can join from other devices.
+                        </p>
+                    </div>
 
-          <div class="host-lobby is-hidden" id="hostLobby">
-            <div>
-              <p class="eyebrow">Room code</p>
-              <div class="join-code" id="hostCode">------</div>
-            </div>
-            <button class="primary-btn" id="startGame" type="button">Start game</button>
-          </div>
+                    <div class="host-lobby is-hidden" id="hostLobby">
+                        <div>
+                            <p class="eyebrow">Room code</p>
+                            <div class="join-code" id="hostCode">------</div>
+                        </div>
+                        <button
+                            class="primary-btn"
+                            id="startGame"
+                            type="button"
+                        >
+                            Start game
+                        </button>
+                    </div>
 
-          <div class="preview-view is-hidden" id="previewView">
-            <div class="preview-heading">
-              <div>
-                <p class="eyebrow">Host preview</p>
-                <h2>Review questions before opening the room.</h2>
-              </div>
-              <div class="preview-actions">
-                <button class="secondary-btn" id="regeneratePreview" type="button">Regenerate</button>
-                <button class="primary-btn" id="createRoomFromPreview" type="button">Create room</button>
-              </div>
-            </div>
-            <div class="preview-list" id="questionPreview"></div>
-          </div>
+                    <div class="preview-view is-hidden" id="previewView">
+                        <div class="preview-heading">
+                            <div>
+                                <p class="eyebrow">Host preview</p>
+                                <h2>
+                                    Review questions before opening the room.
+                                </h2>
+                            </div>
+                            <div class="preview-actions">
+                                <button
+                                    class="secondary-btn"
+                                    id="regeneratePreview"
+                                    type="button"
+                                >
+                                    Regenerate
+                                </button>
+                                <button
+                                    class="primary-btn"
+                                    id="createRoomFromPreview"
+                                    type="button"
+                                >
+                                    Create room
+                                </button>
+                            </div>
+                        </div>
+                        <div class="preview-list" id="questionPreview"></div>
+                    </div>
 
-          <div class="waiting-state is-hidden" id="studentLobby">
-            <div class="badge">Joined</div>
-            <h2>Waiting for the host to start the game.</h2>
-            <p id="studentLobbyText">You are in the room.</p>
-          </div>
+                    <div class="waiting-state is-hidden" id="studentLobby">
+                        <div class="badge">Joined</div>
+                        <h2>Waiting for the host to start the game.</h2>
+                        <p id="studentLobbyText">You are in the room.</p>
+                    </div>
 
-          <div class="question-view is-hidden" id="questionView">
-            <div class="question-meta">
-              <span id="questionProgress">Question 1 / 6</span>
-              <span id="timerBadge">30</span>
-            </div>
-            <h2 id="questionText"></h2>
-            <div class="answers" id="answers"></div>
-            <p class="answer-note" id="answerNote"></p>
-          </div>
+                    <div class="question-view is-hidden" id="questionView">
+                        <div class="question-meta">
+                            <span id="questionProgress">Question 1 / 6</span>
+                            <span id="timerBadge">30</span>
+                        </div>
+                        <h2 id="questionText"></h2>
+                        <div class="answers" id="answers"></div>
+                        <p class="answer-note" id="answerNote"></p>
+                    </div>
 
-          <div class="results-view is-hidden" id="resultsView">
-            <p class="eyebrow">Final results</p>
-            <h2>Leaderboard</h2>
-            <div class="leaderboard" id="leaderboard"></div>
-            <button class="secondary-btn" id="resetGame" type="button">New room</button>
-          </div>
-        </section>
+                    <div class="results-view is-hidden" id="resultsView">
+                        <p class="eyebrow">Final results</p>
+                        <h2>Leaderboard</h2>
+                        <div class="leaderboard" id="leaderboard"></div>
+                        <button
+                            class="secondary-btn"
+                            id="resetGame"
+                            type="button"
+                        >
+                            New room
+                        </button>
+                    </div>
+                </section>
 
-        <aside class="panel roster-panel" aria-label="Players and scores">
-          <div class="panel-heading">
-            <h2>Players</h2>
-            <span id="playerCount">0</span>
-          </div>
-          <div id="players" class="players"></div>
-        </aside>
-      </section>
-    </main>
+                <aside
+                    class="panel roster-panel"
+                    aria-label="Players and scores"
+                >
+                    <div class="panel-heading">
+                        <h2>Players</h2>
+                        <span id="playerCount">0</span>
+                    </div>
+                    <div id="players" class="players"></div>
+                </aside>
+            </section>
+        </main>
 
-    <script type="module" src="app.js"></script>
-  </body>
+        <script type="module" src="app.js"></script>
+    </body>
 </html>
