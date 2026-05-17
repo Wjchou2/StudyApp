@@ -1,9 +1,10 @@
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig, geminiConfig } from "./firebase-config.js";
 
 const configured = Boolean(firebaseConfig?.projectId && firebaseConfig?.apiKey);
 const firebase = {
   db: null,
   get: null,
+  onDisconnect: null,
   onValue: null,
   ref: null,
   remove: null,
@@ -37,9 +38,11 @@ const state = {
   role: "host",
   room: null,
   roomRef: null,
+  playerRef: null,
   unsubscribe: null,
+  disconnectTask: null,
   selfId: sessionStorage.getItem("quizforge-player-id") || makeId(),
-  timer: null,
+  clock: null,
   answerRenderKey: "",
 };
 
@@ -138,7 +141,7 @@ function titleCase(text) {
   return text.replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function createQuestions(lessonText, count) {
+function createFallbackQuestions(lessonText, count) {
   const text = lessonText.trim() || fallbackLesson;
   const sentences = sentencesFrom(text);
   const terms = extractTerms(text);
@@ -171,6 +174,124 @@ function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
 }
 
+function configuredForGemini() {
+  return Boolean(geminiConfig?.apiKey && geminiConfig.apiKey !== "YOUR_GEMINI_API_KEY");
+}
+
+function cleanJsonText(text) {
+  return text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+}
+
+function validateQuestions(value, count) {
+  if (!Array.isArray(value)) return null;
+  const questions = value
+    .map((item) => ({
+      text: String(item.text || item.question || "").trim(),
+      answer: String(item.answer || "").trim(),
+      options: Array.isArray(item.options) ? item.options.map((option) => String(option).trim()) : [],
+    }))
+    .filter((item) => item.text && item.answer && item.options.length >= 4 && item.options.includes(item.answer))
+    .slice(0, count);
+
+  return questions.length ? questions : null;
+}
+
+async function fileToInlinePart(file) {
+  if (!file || file.type === "text/plain" || file.name.endsWith(".md")) return null;
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result).split(",")[1] || ""));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
+
+  return {
+    inline_data: {
+      mime_type: file.type || "application/pdf",
+      data: base64,
+    },
+  };
+}
+
+async function generateGeminiQuestions({ lessonText, filePart, count }) {
+  if (!configuredForGemini()) {
+    throw new Error("Gemini API key is not configured.");
+  }
+
+  const model = geminiConfig.model || "gemini-2.5-flash";
+  const prompt = `Create ${count} classroom quiz questions from the provided lesson material.
+Return only JSON, with no Markdown.
+The JSON must be an array of objects with exactly these keys:
+text: string question
+options: array of exactly 4 short answer choices
+answer: string that exactly matches one option
+
+Rules:
+- Questions must be answerable from the lesson material.
+- Avoid trick questions.
+- Make distractors plausible but clearly wrong.
+- Keep wording suitable for students.
+
+Lesson text:
+${lessonText || "Use the attached lesson file."}`;
+
+  const parts = [{ text: prompt }];
+  if (filePart) parts.push(filePart);
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiConfig.apiKey,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts,
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.35,
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(`Gemini request failed: ${message}`);
+  }
+
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text || "").join("") || "";
+  const parsed = JSON.parse(cleanJsonText(text));
+  const questions = validateQuestions(parsed, count);
+  if (!questions) throw new Error("Gemini returned questions in an invalid format.");
+  return questions;
+}
+
+async function createQuestionsFromLesson(input, count) {
+  try {
+    const questions = await generateGeminiQuestions({ ...input, count });
+    els.cloudStatus.textContent = "Gemini generated the quiz.";
+    els.cloudStatus.classList.remove("is-error");
+    return questions;
+  } catch (error) {
+    els.cloudStatus.textContent = `${error.message} Using local fallback questions.`;
+    els.cloudStatus.classList.toggle("is-error", configuredForGemini());
+    return createFallbackQuestions(input.lessonText, count);
+  }
+}
+
 async function assertFirebaseReady() {
   if (firebase.db) return true;
   if (!configured || !firebaseConfig.databaseURL) {
@@ -187,6 +308,7 @@ async function assertFirebaseReady() {
     const app = initializeApp(firebaseConfig);
     firebase.db = database.getDatabase(app);
     firebase.get = database.get;
+    firebase.onDisconnect = database.onDisconnect;
     firebase.onValue = database.onValue;
     firebase.ref = database.ref;
     firebase.remove = database.remove;
@@ -239,6 +361,7 @@ async function createUniqueRoom(room) {
     if (!existing.exists()) {
       await firebase.set(ref, { ...room, code });
       setRoomRef(code);
+      await setupPresence(code, true);
       return code;
     }
   }
@@ -253,12 +376,48 @@ async function joinRoom(code, player) {
     [`players/${player.id}`]: player,
   });
   setRoomRef(code);
+  await setupPresence(code, false);
   return true;
 }
 
 async function updateRoom(patch) {
   if (!state.roomRef) return;
   await firebase.update(state.roomRef, patch);
+}
+
+async function setupPresence(code, isHost) {
+  if (state.disconnectTask?.cancel) {
+    await state.disconnectTask.cancel();
+  }
+
+  state.playerRef = firebase.ref(firebase.db, `rooms/${code}/players/${state.selfId}`);
+  if (isHost) {
+    state.disconnectTask = firebase.onDisconnect(roomDoc(code));
+    await state.disconnectTask.remove();
+  } else {
+    state.disconnectTask = firebase.onDisconnect(state.playerRef);
+    await state.disconnectTask.remove();
+  }
+}
+
+async function leaveRoom() {
+  clearInterval(state.clock);
+  if (state.disconnectTask?.cancel) {
+    await state.disconnectTask.cancel();
+  }
+
+  if (state.role === "host" && state.roomRef) {
+    await firebase.remove(state.roomRef);
+  } else if (state.playerRef) {
+    await firebase.remove(state.playerRef);
+  }
+
+  if (state.unsubscribe) state.unsubscribe();
+  state.room = null;
+  state.roomRef = null;
+  state.playerRef = null;
+  state.disconnectTask = null;
+  render();
 }
 
 function currentQuestion() {
@@ -292,23 +451,22 @@ async function answerQuestion(option) {
 }
 
 async function startQuestion(index) {
-  clearInterval(state.timer);
+  clearInterval(state.clock);
   await updateRoom({
     currentQuestion: index,
     questionStartedAt: Date.now(),
     status: "question",
   });
-  startHostClock();
+  startQuestionClock();
 }
 
-function startHostClock() {
-  if (state.role !== "host") return;
-  clearInterval(state.timer);
-  state.timer = setInterval(async () => {
+function startQuestionClock() {
+  clearInterval(state.clock);
+  state.clock = setInterval(async () => {
     if (!state.room || state.room.status !== "question") return;
     renderQuestion();
-    if (remainingSeconds() <= 0 || everyoneAnswered()) {
-      clearInterval(state.timer);
+    if (state.role === "host" && (remainingSeconds() <= 0 || everyoneAnswered())) {
+      clearInterval(state.clock);
       await nextQuestion();
     }
   }, 500);
@@ -354,7 +512,7 @@ function render() {
   }
 
   if (room.status === "lobby") {
-    clearInterval(state.timer);
+    clearInterval(state.clock);
     if (state.role === "host") {
       showOnly(els.hostLobby);
     } else {
@@ -364,10 +522,10 @@ function render() {
   }
   if (room.status === "question") {
     renderQuestion();
-    startHostClock();
+    startQuestionClock();
   }
   if (room.status === "results") {
-    clearInterval(state.timer);
+    clearInterval(state.clock);
     renderResults();
   }
 
@@ -456,13 +614,18 @@ function renderResults() {
 async function readLessonInput() {
   const typed = els.lessonText.value.trim();
   const file = els.lessonFile.files[0];
-  if (!file) return typed;
-
-  if (file.type === "text/plain" || file.name.endsWith(".md")) {
-    return `${typed}\n${await file.text()}`;
+  if (!file) {
+    return { lessonText: typed, filePart: null };
   }
 
-  return `${typed}\nUploaded file: ${file.name}. Add extracted PDF text here when connected to a server-side parser or AI API.`;
+  if (file.type === "text/plain" || file.name.endsWith(".md")) {
+    return { lessonText: `${typed}\n${await file.text()}`, filePart: null };
+  }
+
+  return {
+    lessonText: `${typed}\nUploaded file: ${file.name}.`,
+    filePart: await fileToInlinePart(file),
+  };
 }
 
 els.hostTab.addEventListener("click", () => setMode("host"));
@@ -471,7 +634,10 @@ els.joinTab.addEventListener("click", () => setMode("join"));
 els.hostForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!(await assertFirebaseReady())) return;
-  const lesson = await readLessonInput();
+  els.cloudStatus.textContent = "Generating questions...";
+  els.cloudStatus.classList.remove("is-error");
+  const lessonInput = await readLessonInput();
+  const questionCount = Number(els.questionCount.value);
   const host = {
     id: state.selfId,
     name: "Host",
@@ -483,7 +649,7 @@ els.hostForm.addEventListener("submit", async (event) => {
     const code = await createUniqueRoom({
       hostId: state.selfId,
       status: "lobby",
-      questions: createQuestions(lesson, Number(els.questionCount.value)),
+      questions: await createQuestionsFromLesson(lessonInput, questionCount),
       timerSeconds: Number(els.timerSeconds.value),
       questionStartedAt: 0,
       currentQuestion: -1,
@@ -529,14 +695,15 @@ els.startGame.addEventListener("click", () => {
 });
 
 els.resetGame.addEventListener("click", async () => {
-  clearInterval(state.timer);
+  await leaveRoom();
+});
+
+window.addEventListener("pagehide", () => {
   if (state.role === "host" && state.roomRef) {
-    await firebase.remove(state.roomRef);
+    void firebase.remove(state.roomRef);
+  } else if (state.playerRef) {
+    void firebase.remove(state.playerRef);
   }
-  if (state.unsubscribe) state.unsubscribe();
-  state.room = null;
-  state.roomRef = null;
-  render();
 });
 
 setMode("host");

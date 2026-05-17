@@ -3,11 +3,12 @@
 A Firebase-backed study game prototype:
 
 - Host pastes lesson/unit notes or uploads a `.txt`/`.md` file.
-- The app generates multiple-choice questions from the lesson content.
+- Gemini generates multiple-choice questions from the lesson content.
 - A Realtime Database room is created with a join code.
 - Students join from other devices using the same deployed URL and code.
 - The host starts a timed quiz.
 - Players answer each question, earn points for correct answers, and see a live leaderboard.
+- The room is removed when the host disconnects. Non-host players are removed when they disconnect.
 
 ## Run Locally
 
@@ -44,11 +45,14 @@ For quick testing, Realtime Database rules can be opened temporarily:
 Use stricter rules before sharing broadly. A production version should add Firebase Auth,
 host-only room controls, room expiration, and server-side validation.
 
-## AI And PDF Notes
+## Gemini Setup
 
-This version keeps the original dependency-free local question generator. For real AI/PDF support,
-replace `createQuestions()` in `app.js` with a backend endpoint that:
+1. Create a Gemini API key in Google AI Studio.
+2. Paste it into `geminiConfig.apiKey` in `firebase-config.js`.
+3. Keep `geminiConfig.model` as `gemini-2.5-flash`, or replace it with another model that supports `generateContent`.
 
-1. Extracts text from uploaded PDFs.
-2. Sends lesson text to an AI model.
-3. Returns validated multiple-choice questions to store in the Realtime Database room.
+This static prototype calls Gemini directly from the browser, so the Gemini key is visible to users.
+For production, proxy this through a Cloud Function or server endpoint.
+
+The app sends pasted notes and uploaded PDFs to Gemini. If Gemini is not configured or returns
+invalid JSON, the app falls back to the local generator so the game can still run.

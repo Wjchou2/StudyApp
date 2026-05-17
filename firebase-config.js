@@ -8,3 +8,10 @@ export const firebaseConfig = {
     appId: "1:539180218780:web:b604a3b796cd96a7353059",
     measurementId: "G-GC63BZC4J4",
 };
+
+// For a public static prototype this key is visible in the browser.
+// For production, proxy Gemini calls through a server or Cloud Function.
+export const geminiConfig = {
+    apiKey: "",
+    model: "gemini-2.5-flash",
+};
